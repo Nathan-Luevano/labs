@@ -164,4 +164,42 @@ llvm-mc --triple=aarch64 --disassemble
   bits 7:5    -> op2
   bits 4:0    -> Rt
 
-  - So actually LLMV's own parser uses the previous components to construct names of the form:
+  - So actually LLMV's own parser uses the previous components to construct names of the form: `S<op0>_<op1>_C<CRn>_C<CRm>_<op2>`
+      - it accepts op0 values from 0 - 3 in that generic texual syntax (ref)[https://llvm.org/doxygen/AArch64BaseInfo_8cpp_source.html]
+      - and actually on a deeper note the encoding contains only encoded o0 bit and the architeural op0 is formed as `1:o0` thus the architectural MSR (register) system register access can only produce `op0 = 2 `or `op0 = 3`
+  - So if we run the follwoing code:
+  ```python
+  word = 0xD5033FFF
+
+  fields = {
+      "op0": (word >> 19) & 0b11,
+      "op1": (word >> 16) & 0b111,
+      "CRn": (word >> 12) & 0b1111,
+      "CRm": (word >> 8) & 0b1111,
+      "op2": (word >> 5) & 0b111,
+      "Rt": word & 0b11111,
+  }
+
+  print(f"word: {word:032b}")
+
+  for name, value in fields.items():
+      print(f"{name:4} = {value}")
+  ```
+  - We should get the follwing output:
+    ```python
+    word: 11010101000000110011111111111111
+    op0  = 0
+    op1  = 3
+    CRn  = 3
+    CRm  = 15
+    op2  = 7
+    Rt   = 31
+    ```
+  - Now if we assemble the piece then it becomes: `S0_3_C3_C15_7` which is EXACTLY what aLLVM printed
+  - Okay now we can switch our focus to `Rt`. What does that become?
+    - So converting it to binary we get `0b11111` and looking again at the table gen inside LLVM we find that this is representitive of the zero register or `xzr` in assembly
+  - So now putting this all together the full result of LLVM's complete result is:
+    ```python
+    msr S0_3_C3_C15_7, xzr
+    ```
+  - 
