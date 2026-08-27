@@ -153,3 +153,15 @@ llvm-mc --triple=aarch64 --disassemble
   * a limitation in SILICA's specification oracle
   * another architectural rule that has not yet been accounted for
 - After establishing the architectural reason, the encoding can be embedded inside a small AArch64 function and analyzed with current reverse-engineering tools to determine whether the decoder disagreement has any practical effect on disassembly, function recovery, or decompilation.
+## Decoding the LLVM string manually
+- Okay so we start with `0xD5033FFF`
+  - in binary its `11010101000000110011111111111111`
+  - via the [LLVM Project](https://github.com/llvm/llvm-project) we know that the important fields are:
+  bits 20:19  -> op0
+  bits 18:16  -> op1
+  bits 15:12  -> CRn
+  bits 11:8   -> CRm
+  bits 7:5    -> op2
+  bits 4:0    -> Rt
+
+  - So actually LLMV's own parser uses the previous components to construct names of the form:
