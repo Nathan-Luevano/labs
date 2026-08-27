@@ -202,4 +202,19 @@ llvm-mc --triple=aarch64 --disassemble
     ```python
     msr S0_3_C3_C15_7, xzr
     ```
-  - 
+  - So ARM instructions explicitly maps the following:
+  ```python
+  o0 = 0 -> op0 = 2
+  o0 = 1 -> op0 = 3
+  ```
+  - This is where our first major clue lies since our canadidate has `op0 = 0` 
+  - while LLVM's generic syntax parser permits the following while the MSR (register) form only uses system-register op0 values 2 and 3:
+  ```python
+  S0_...
+  S1_...
+  S2_...
+  S3_...
+  ```
+- So now we find ourselves at the question of:
+> Why is LLVM interpreting a word with `op0 = 0` as generic `MSR` syntax even though the architectural `MSR (register)` encoding only produces `op0 = 2` or `3`?
+- 
