@@ -640,4 +640,64 @@ Yep. I’d continue it like this, keeping the same “walking myself through it�
   ```
 * As you can see by going backward we find this is implemented by:
   ![alt text](image-3.png)
+* Now the key observation here is that the program **validates the existence of the input header, but does not validate the length contained in that header**
+* Okay next we are going to debug this program and just ensure you put a breakpoitn at `memcpy` 
+* Once you run it check the general registers. We are looking for `RDI`, `RSI`, and `RDX`
+  ![alt text](image-4.png)
+* So this is great as you can see the `RDX` value is `0x20` which is `32` decimal
+  * This is quite important becuase we now have proof what the program is going to run:
+  ```c
+  memcpy(
+      destination = name,
+      source      = data + 1,
+      size        = 32
+  )
+  ```
+  * Why is this important you ask? Well if you recall how we wrote this program we actually had our original declaration as `char name[16];` 
+  * In clearer temrs we have:
+  ```python
+  destination capacity = 16 bytes
+  requested copy       = 32 bytes
+  ```
+  * This is 16 bytes too many!
+* Now if you step over `memcpy` we can inspect `RDI`, `RSI`, and `RDX` again.
+  ![alt text](image-5.png)
+* Okay neat! Now there is an overflow but why didn't it crash?
+  * So since we delcared intially 16 bytes, but we found taht IDA infered it was 24 bytes (this was not to be trusted), after verification we found RDX is actually 32 bytes.
+    * Now this is tell us that `memcpy` writes 32 consecutive bytes and if you do some further stack analysis we can find that in this case its around `rbp-30h`
+  * Give all that information we now know that this is what happended:
+    ```python
+    Bytes  0 - 15  -> name[16]       VALID
+    Bytes 16 - 23  -> stack padding  OVERFLOW
+    Bytes 24 - 31  -> len            OVERFLOW
+    ```
+  * So this shows that it did write outside the bounds of the object it just so happen that those those 16 bytes overwrote and was split between the `padding` and `len`
+    * And in this program `len` is not needed so the overwrite doesn't affect the program.
+    * Even thought this is fine this is actually what real memory corruption frequently looks like
+* So now we need to concretly prove this is the case. Starting with the memory dump:
+  ![alt text](image-6.png)
+  * Play we wamt to start by looking at the region `RDI = 0x7FFFFFFFD9C0`
+  * Analyzingi the following address and taking into context our previous deduction we find:
+    ```python
+    D9C0 - D9CF    AAAAAAAAAAAAAAAA    
+    D9D0 - D9D7    BBBBBBBB            
+    D9D8 - D9DF    CCCCCCCC            
+    D9E0 - D9E7    data pointer        
+    ```
+  * Now hte key part is: `0x7FFFFFFFD9D8` = `4343434343434343`
+    * in ASCII `C` is `0x43` which explains the 8 byte value
+    * This also proves that our `CCCCCCCC` value has overwritten an entriely differnet local variable.
+      * This can also be mapped by:
+        ```python
+        name = rbp - 0x30 = D9C0
+        ```
+      * Meaning `RBP` = ``D9F0` and saved `len` was approx:
+        ```python
+        rbp - 0x18
+        = D9F0 - 0x18
+        = D9D8
+        ```
+      * And what's at `D9D8`? `4343434343434343` BOOM
+* Now this is proven we can determine that since it never touch the data pointer and len wasn't used again throughout the program the program didn't need to crash.
+* Even with it not crashing this still was a **Silent Stack-Buffer overflow**
 * 
