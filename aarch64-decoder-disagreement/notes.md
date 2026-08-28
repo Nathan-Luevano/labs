@@ -165,7 +165,7 @@ llvm-mc --triple=aarch64 --disassemble
   bits 4:0    -> Rt
 
   - So actually LLMV's own parser uses the previous components to construct names of the form: `S<op0>_<op1>_C<CRn>_C<CRm>_<op2>`
-      - it accepts op0 values from 0 - 3 in that generic texual syntax (ref)[https://llvm.org/doxygen/AArch64BaseInfo_8cpp_source.html]
+      - it accepts op0 values from 0 - 3 in that generic texual syntax [ref](https://llvm.org/doxygen/AArch64BaseInfo_8cpp_source.html)
       - and actually on a deeper note the encoding contains only encoded o0 bit and the architeural op0 is formed as `1:o0` thus the architectural MSR (register) system register access can only produce `op0 = 2 `or `op0 = 3`
   - So if we run the follwoing code:
   ```python
@@ -255,7 +255,7 @@ Output:
 - Okay so looking at `11010101000` a bunch of AArch64 already live under this prefix 
   - For example we have `SYS` uses the system instrcution form where op0 effectively becomes 01.
   - then you have MSR (register) that uses op0 values 10 or 11
-  - all based on this source https://www.scs.stanford.edu/~zyedidia/arm64/sys.html
+  - all based on this [source](https://www.scs.stanford.edu/~zyedidia/arm64/sys.html)
 - Okay no going through this piece by piece:
   - `bits 20:19 = 00` &mdash; pretty esay we now know that our word is not in the architectural MSR (register) encoidng class
     - which is pretty interesting cuz that means LLVM's output as stated preivously would be printing sometihng that looks like an MSR (regisiter), BUT the actual fixed bits do not match architectural MSR (register)
