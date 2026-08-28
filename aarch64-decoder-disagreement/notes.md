@@ -510,11 +510,11 @@ Yep. I’d continue it like this, keeping the same “walking myself through it�
 * we want to open with ELF for x86-64 and then ensure `metapc` as well as ensure it decodes as a 64-bit binary
 * you should see something like this now:
 
-  ![IDA Repro-clang](image-1.png)
+  ![IDA Repro-clang](/aarch64-decoder-disagreement/media/image-1.png)
 
 * Now select the `parse_record` function under functions and you should see something similar. This is where we want to start.
 
-  ![alt text](image-2.png)
+  ![alt text](/aarch64-decoder-disagreement/media/image-2.png)
 
 * Okay so now you are going to locate the `call memcpy` and then look for the instructions that most recently assign `rdi`, `edx` and `rsi`.
 
@@ -531,7 +531,7 @@ Yep. I’d continue it like this, keeping the same “walking myself through it�
 * Okay next you want to generate the pseudocode.
 * It should look something like below and it should be quite readable since we decided to compile with `-O0 -g`.
 
-  ![alt text](image.png)
+  ![alt text](/aarch64-decoder-disagreement/media/image.png)
 
 * The pseudocode is basically IDA trying to reconstruct what the original C looked like. It is useful for understanding the overall logic, but it is still only IDA's interpretation of the assembly.
 
@@ -639,11 +639,11 @@ Yep. I’d continue it like this, keeping the same “walking myself through it�
       return -1;
   ```
 * As you can see by going backward we find this is implemented by:
-  ![alt text](image-3.png)
+  ![alt text](/aarch64-decoder-disagreement/media/image-3.png)
 * Now the key observation here is that the program **validates the existence of the input header, but does not validate the length contained in that header**
 * Okay next we are going to debug this program and just ensure you put a breakpoitn at `memcpy` 
 * Once you run it check the general registers. We are looking for `RDI`, `RSI`, and `RDX`
-  ![alt text](image-4.png)
+  ![alt text](/aarch64-decoder-disagreement/media/image-4.png)
 * So this is great as you can see the `RDX` value is `0x20` which is `32` decimal
   * This is quite important becuase we now have proof what the program is going to run:
   ```c
@@ -661,7 +661,7 @@ Yep. I’d continue it like this, keeping the same “walking myself through it�
   ```
   * This is 16 bytes too many!
 * Now if you step over `memcpy` we can inspect `RDI`, `RSI`, and `RDX` again.
-  ![alt text](image-5.png)
+  ![alt text](/aarch64-decoder-disagreement/media/image-5.png)
 * Okay neat! Now there is an overflow but why didn't it crash?
   * So since we delcared intially 16 bytes, but we found taht IDA infered it was 24 bytes (this was not to be trusted), after verification we found RDX is actually 32 bytes.
     * Now this is tell us that `memcpy` writes 32 consecutive bytes and if you do some further stack analysis we can find that in this case its around `rbp-30h`
@@ -675,7 +675,7 @@ Yep. I’d continue it like this, keeping the same “walking myself through it�
     * And in this program `len` is not needed so the overwrite doesn't affect the program.
     * Even thought this is fine this is actually what real memory corruption frequently looks like
 * So now we need to concretly prove this is the case. Starting with the memory dump:
-  ![alt text](image-6.png)
+  ![alt text](/aarch64-decoder-disagreement/media/image-6.png)
   * Play we wamt to start by looking at the region `RDI = 0x7FFFFFFFD9C0`
   * Analyzingi the following address and taking into context our previous deduction we find:
     ```python
