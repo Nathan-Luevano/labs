@@ -510,11 +510,11 @@ Yep. I’d continue it like this, keeping the same “walking myself through it�
 * we want to open with ELF for x86-64 and then ensure `metapc` as well as ensure it decodes as a 64-bit binary
 * you should see something like this now:
 
-![IDA Repro-clang](image-1.png)
+  ![IDA Repro-clang](image-1.png)
 
 * Now select the `parse_record` function under functions and you should see something similar. This is where we want to start.
 
-![alt text](image-2.png)
+  ![alt text](image-2.png)
 
 * Okay so now you are going to locate the `call memcpy` and then look for the instructions that most recently assign `rdi`, `edx` and `rsi`.
 
@@ -522,16 +522,16 @@ Yep. I’d continue it like this, keeping the same “walking myself through it�
 
 * Here we are conceptually trying to prove:
 
-```text
-RDI -> name
-RSI -> data + 1
-RDX -> name_len
-```
+  ```text
+  RDI -> name
+  RSI -> data + 1
+  RDX -> name_len
+  ```
 
 * Okay next you want to generate the pseudocode.
 * It should look something like below and it should be quite readable since we decided to compile with `-O0 -g`.
 
-![alt text](image.png)
+  ![alt text](image.png)
 
 * The pseudocode is basically IDA trying to reconstruct what the original C looked like. It is useful for understanding the overall logic, but it is still only IDA's interpretation of the assembly.
 
@@ -549,33 +549,33 @@ RDX -> name_len
 
 * In C, `*data` is just another way of saying `data[0]`, so when IDA shows:
 
-```c
-memcpy(name, dataa + 1, *dataa);
-```
+  ```c
+  memcpy(name, dataa + 1, *dataa);
+  ```
 
 * We can think about it as:
 
-```text
-destination = name
-source      = data + 1
-size        = data[0]
-```
+  ```text
+  destination = name
+  source      = data + 1
+  size        = data[0]
+  ```
 
 * Now going back to the assembly, the few instructions before `memcpy` are just setting up those three arguments.
 
 * On Linux x86-64, the first few function arguments are passed through registers:
 
-```text
-RDI = first argument
-RSI = second argument
-RDX = third argument
-```
+  ```text
+  RDI = first argument
+  RSI = second argument
+  RDX = third argument
+  ```
 
 * Since `memcpy` is:
 
-```c
-memcpy(destination, source, size);
-```
+  ```c
+  memcpy(destination, source, size);
+  ```
 
 * We can use the register values before the call to figure out exactly what is being passed into it.
 
@@ -587,23 +587,23 @@ memcpy(destination, source, size);
 
 * So by the time we reach:
 
-```asm
-call memcpy
-```
+  ```asm
+  call memcpy
+  ```
 
 * We have confirmed:
 
-```text
-RDI = address of name
-RSI = data + 1
-RDX = name_len
-```
+  ```text
+  RDI = address of name
+  RSI = data + 1
+  RDX = name_len
+  ```
 
 * Which reconstructs back into:
 
-```c
-memcpy(name, data + 1, name_len);
-```
+  ```c
+  memcpy(name, data + 1, name_len);
+  ```
 
 * This is really the main thought process with reverse engineering here. Instead of trying to understand every instruction independently, we work backwards from an important function call and figure out where each argument came from.
 
@@ -615,11 +615,8 @@ memcpy(name, data + 1, name_len);
 
 * So the important security question becomes:
 
-```text
-Where does the memcpy size come from?
-
-Does the program validate that size before using it?
-```
+  > Where does the memcpy size come from?
+  > Does the program validate that size before using it?
 
 * In this case, the size comes directly from the input and there is no bounds check between reading that value and calling `memcpy`.
 
@@ -629,16 +626,18 @@ Does the program validate that size before using it?
 
 * At this point we understand the main data flow through the vulnerable operation:
 
-```text
-data[0]
-   ↓
-name_len
-   ↓
-RDX
-   ↓
-memcpy size
-```
+  ```mermaid
+  graph LR
+      data[data] --> name_len[name_len] --> RDX[RDX] --> memcpy_size[memcpy size]
+  ```
 
 * Next we want to go backward a little further and understand the `if (len < 2)` check and the control-flow branches that lead us into `loc_5555555551B7`. This will let us understand why IDA split the function into different blocks and how the CPU decides whether or not the `memcpy` block executes.
 
-
+* So now we are looking for the assembly that corresponds to the following:
+  ```c
+  if (len < 2)
+      return -1;
+  ```
+* As you can see by going backward we find this is implemented by:
+  ![alt text](image-3.png)
+* 
