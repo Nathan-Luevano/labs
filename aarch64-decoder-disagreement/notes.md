@@ -218,7 +218,7 @@ llvm-mc --triple=aarch64 --disassemble
 * So now we find ourselves at the question of:
 > Why is LLVM interpreting a word with `op0 = 0` as generic `MSR` syntax even though the architectural `MSR (register)` encoding only produces `op0 = 2` or `3`?
 
-## Now onto identifying the instruction calss from the fixed bits
+## Now onto identifying the instruction class from the fixed bits
 * Okay so first we want to take that word, `0xD5033FFF`, and turn it into something that is a little bit more digestible
   ```python
   word = 0xD5033FFF
@@ -701,3 +701,119 @@ Yep. I’d continue it like this, keeping the same “walking myself through it�
 * Now this is proven we can determine that since it never touch the data pointer and len wasn't used again throughout the program the program didn't need to crash.
 * Even with it not crashing this still was a **Silent Stack-Buffer overflow**
 * 
+
+# Back to the Actual AArch64 Finding
+
+* Okay the x86-64/IDA section was useful practice, but it did not test `0xD5033FFF` and is not evidence of an AArch64 decoder bug.
+* So I went back to the original four bytes and checked the exact tool behavior again.
+
+## LLVM Feature Configuration Was the Missing Piece
+
+* The locally installed LLVM is `18.1.3`, while SILICA's environment has LLVM `22.1.8`:
+  ```bash
+  $ /usr/bin/llvm-mc --version | head -2
+  Ubuntu LLVM version 18.1.3
+    Optimized build.
+
+  $ /home/natedawg/repos/silica/.venv/bin/llvm-config --version
+  22.1.8
+  ```
+* I tested the canonical SB and the candidate with the default target features and then with `+sb` explicitly enabled:
+  ```bash
+  printf '0xff 0x30 0x03 0xd5\n0xff 0x3f 0x03 0xd5\n' | \
+    llvm-mc --triple=aarch64 --disassemble --mattr=+sb
+  ```
+  ```text
+  <stdin>:2:1: warning: potentially undefined instruction encoding
+          .text
+          sb
+          sb
+  ```
+* Without `--mattr=+sb`, LLVM 18 prints:
+  ```text
+  msr S0_3_C3_C0_7, xzr
+  msr S0_3_C3_C15_7, xzr
+  ```
+* I ran the same three cases on LLVM 22.1.8: default, `+sb`, and `-sb`. Its output is the same as LLVM 18.
+  * default/`-sb` -> generic `msr S0_3_...`
+  * `+sb` -> `sb`, with a warning only for `0xD5033FFF`
+* So the earlier LLVM 22 result was real, but it was not a LLVM 18 vs 22 change. It was an invocation/feature difference.
+  * The original command did not enable `FEAT_SB`, so the decoder fell back to the generic system-register spelling.
+  * The controlled LLVM 18 test that printed `sb` must have enabled `+sb` somewhere in the invocation/target configuration.
+
+## Success vs SoftFail vs Fail
+
+* LLVM actually has three decoder results:
+  ```text
+  Success  = decodes normally
+  SoftFail = disassemblable but architecturally incorrect
+  Fail     = invalid/no instruction
+  ```
+* `llvm-mc`'s source prints `potentially undefined instruction encoding` only for `MCDisassembler::SoftFail`, then still emits the decoded instruction.
+* The AArch64 TableGen entry explains exactly why this word SoftFails when SB is enabled:
+  ```text
+  def SB ... {
+    let Inst{20-5} = 0b0001100110000111;
+    let Unpredictable{11-8} = 0b1111;
+    let Predicates = [HasSB];
+  }
+  ```
+* `Unpredictable{11-8} = 1111` is a mask, not the expected CRm value. It means differences from the normal instruction bits in all four CRm positions cause SoftFail.
+  * canonical `0xD50330FF`: CRm = `0000` -> Success as `sb`
+  * candidate `0xD5033FFF`: CRm = `1111` -> SoftFail as `sb`
+* The LLVM 18 and LLVM 22 source entries are the same here, which also rules out a version change in this decoder rule.
+
+## Capstone 5 vs Capstone 6
+
+* I kept these tests in the existing isolated environments and did not change the `labs` environment.
+* The SILICA runtime reports Capstone `5.0.7` from `capstone.cs_version()`:
+  ```text
+  0xd50330ff [('sb', '')]
+  0xd5033fff INVALID
+  ```
+* The separate `capstone6` micromamba environment reports `6.0.0` and exposes the instruction's `illegal` flag:
+  ```text
+  0xd50330ff [('sb', '', False)]
+  0xd5033fff [('sb', '', True)]
+  ```
+* Capstone 6 documents `illegal=True` as bytes that disassemble to an instruction but are illegal by the ISA definitions.
+* That is semantically very close to LLVM's SoftFail. Capstone 5 instead turns this case into a complete decode failure.
+* This means Capstone 5 vs 6 is a real historical/version-specific behavior difference, but current LLVM and Capstone 6 are not disagreeing about whether the candidate is an ordinary legal instruction.
+
+## Checking the Arm Encoding
+
+* I checked the locally available Arm A64 ISA XML (`2026-06_rel`) instead of relying only on the decoder output.
+* Its SB diagram fixes the normal instruction around `0xD50330FF` and shows CRm bits `11:8` as `(0)(0)(0)(0)`. SB also requires `FEAT_SB`.
+* Therefore `0xD5033FFF` is structurally in the SB encoding, but its CRm is not the ordinary SB value.
+* This agrees with the tool evidence:
+  * LLVM recognizes the SB form but marks the CRm mismatch SoftFail/potentially undefined.
+  * Capstone 6 recognizes the SB form but marks it illegal.
+  * Capstone 5 refuses to return an instruction.
+* So I do not have evidence that `0xD5033FFF` is an ordinary valid SB or a valid architectural `MSR (register)`. The generic `msr S0_3_...` spelling is LLVM's fallback when the SB feature is absent, not proof that the architecture assigned that system register.
+
+## What SILICA Actually Found
+
+* SILICA's LLVM oracle calls `LLVMCreateDisasm` with only `aarch64-unknown-linux-gnu`, so it does not request `+sb`.
+* It then treats any nonzero byte count from `LLVMDisasmInstruction` as `valid`. That C API result exposes decode/no-decode, not LLVM's Success vs SoftFail distinction.
+* SILICA's Capstone 5 oracle similarly treats `cs_disasm` returning an instruction as valid and zero instructions as invalid.
+* So for this word SILICA compared different decoder feature/API policies as one binary property:
+  ```text
+  LLVM default context -> decoded generic fallback -> VALID
+  Capstone 5           -> no instruction          -> INVALID
+  ```
+* That disagreement is real at the API-output level, but it does not establish that either current decoder has an architectural correctness bug.
+* SILICA should eventually record the target feature profile and preserve at least:
+  ```text
+  VALID / SOFTFAIL_OR_ILLEGAL / INVALID
+  ```
+  * LLVM's lower-level MC decoder exposes all three states.
+  * Capstone 6 exposes `illegal` separately from decode failure.
+  * Capstone 5 cannot express the middle state for this word, so its result still needs version/API context.
+
+## Current Conclusion
+
+* **Proved:** LLVM 18.1.3 and 22.1.8 behave the same; `+sb` changes the spelling from generic `msr` to `sb`, and the candidate is SoftFail while canonical SB is Success.
+* **Proved:** Capstone 5.0.7 rejects the candidate, while Capstone 6.0.0 decodes it as `sb` with `illegal=True`.
+* **Proved:** the candidate differs from canonical SB only in CRm, and the Arm XML does not show CRm=`1111` as an ordinary SB encoding.
+* **Conclusion:** this is a combination of historical Capstone version behavior, expected decoder feature/API policy differences, and a SILICA oracle/classification limitation. I do not currently see a reportable LLVM or Capstone decoder bug here.
+* **Still inferred:** the exact architectural execution outcome for every implementation is beyond what these decoder tests prove. For SILICA's purpose the important supported statement is narrower: this word belongs in an illegal/SoftFail bucket, not the ordinary-valid bucket.
