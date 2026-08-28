@@ -217,4 +217,77 @@ llvm-mc --triple=aarch64 --disassemble
   ```
 - So now we find ourselves at the question of:
 > Why is LLVM interpreting a word with `op0 = 0` as generic `MSR` syntax even though the architectural `MSR (register)` encoding only produces `op0 = 2` or `3`?
-- 
+
+## Now onto identifying the instruction calss from the fixed bits
+- Okay so first we want to take that word, `0xD5033FFF`, and turn it into something that is a little bit more digestible
+  ```python
+  word = 0xD5033FFF
+
+  print(f"word:  0x{word:08X}")
+  print(f"bits:  {word:032b}")
+  print()
+
+  fields = [
+      ("31:21", 31, 21),
+      ("20:19", 20, 19),
+      ("18:16", 18, 16),
+      ("15:12", 15, 12),
+      ("11:8",  11, 8),
+      ("7:5",    7, 5),
+      ("4:0",    4, 0),
+  ]
+
+  for name, hi, lo in fields:
+      width = hi - lo + 1
+      value = (word >> lo) & ((1 << width) - 1)
+      print(f"{name:5} = {value:0{width}b}")
+  ```
+Output:
+```python
+31:21 = 11010101000
+20:19 = 00
+18:16 = 011
+15:12 = 0011
+11:8  = 1111
+7:5   = 111
+4:0   = 11111
+```
+- Okay so looking at `11010101000` a bunch of AArch64 already live under this prefix 
+  - For example we have `SYS` uses the system instrcution form where op0 effectively becomes 01.
+  - then you have MSR (register) that uses op0 values 10 or 11
+  - all based on this source https://www.scs.stanford.edu/~zyedidia/arm64/sys.html
+- Okay no going through this piece by piece:
+  - `bits 20:19 = 00` &mdash; pretty esay we now know that our word is not in the architectural MSR (register) encoidng class
+    - which is pretty interesting cuz that means LLVM's output as stated preivously would be printing sometihng that looks like an MSR (regisiter), BUT the actual fixed bits do not match architectural MSR (register)
+## if not architectural MSR (register) then what?
+- okay so now moving our eyes to we can note that this must put us in the same region use by barrier/system-control instructions:
+  ```python
+  18:16 = 011
+  15:12 = 0011
+  ```
+  - this includes some of the following:
+  ```python
+  CLREX
+  DSB
+  DMB
+  ISB
+  SB
+  ```
+- Okay now let's compare our candidate with `SB`
+  - just for note `SB` is the AArch64 Speculation Barrier instruction
+  - Another note is that Arm specifces `SB` as require `FEAT_SB` and its `CRm` fielod is fixed to zero.
+    - This would switch our `11:8  = 1111` to `11:8  = 0000`
+    - Now everything matches **except** `CRm`
+  - So now if we look at this `SB` vs our candidate we find the following:
+    - `SB: 0xD50330FF` &mdash; `D503 30 FF`
+    - `Candidate: 0xD5033FFF` &mdash; `D503 3F FF`
+    - Okay so note that the `0` becoming `F` is basically `CRm` going from `0000` to `1111`
+  - This is SO trouble some now cuz it changes our Hypothesis AGAIN
+- This is our current state:
+  - not architectural MSR(register)
+  - resembles barrier/system encoding region
+  - same structure as SB except CRm is wrong
+  - LLVM nevertheless prints generic MSR syntax
+  - Capstone rejects it
+- NOW... we are at the point where 
+> Should LLVM's instruction decoder have reached the `MSR` printer for this word in the first place?
